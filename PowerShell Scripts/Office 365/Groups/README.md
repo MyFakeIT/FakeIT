@@ -81,30 +81,3 @@ This repository contains three PowerShell scripts designed to manage Microsoft 3
 
 
 
-
-
-
-
-# Microsoft 365 Group Privacy Scripts
-
-Two scripts to manage Microsoft 365 Group privacy:
-
-1. **Export-PublicGroupsToCSV.ps1**
-   - Lists all Public groups and saves them to `PublicGroups.csv` on your Desktop.
-   - Usage: `.\Export-PublicGroupsToCSV.ps1`
-
-2. **Set-PublicGroupsToPrivateFromCSV.ps1**
-   - Switches groups listed in `PublicGroups.csv` to Private, requiring owner approval for join requests.
-   - Usage: `.\Set-PublicGroupsToPrivateFromCSV.ps1`
-
-## Prerequisites
-- PowerShell module: `ExchangeOnlineManagement` (`Install-Module -Name ExchangeOnlineManagement`)
-- Permissions: Exchange Admin or Global Admin
-
-## Notes
-- Run Script 1 first to generate the CSV, then Script 2 to apply changes.
-- Preserves existing sharing settings.
-
-
-
-
