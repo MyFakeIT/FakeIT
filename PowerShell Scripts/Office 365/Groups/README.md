@@ -63,7 +63,7 @@ This repository contains three PowerShell scripts designed to manage Microsoft 3
     - No results mean all Public groups are now Private.
 
 ## Author
-- FakeIT (IT assisted)
+- FakeIT (AI assisted)
 - **Date**: March 06, 2025
 
 
