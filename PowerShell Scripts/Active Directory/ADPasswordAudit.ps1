@@ -1,54 +1,44 @@
-<#
-.SYNOPSIS
-    Exports a detailed password audit report for Active Directory users to a CSV file.
-.DESCRIPTION
-    Retrieves key user account attributes from Active Directory related to password management,
-    account status, and activity. Outputs the data to a CSV file with a dynamic date in the filename.
-    Intended for auditing password policy compliance and identifying potential security risks.
-.NOTES
-    Author: FakeIT
-    Date: April 2, 2025
-    Requires: ActiveDirectory module, appropriate AD permissions (e.g., Domain Admin)
-.EXAMPLE
-    .\ADPasswordAudit.ps1
-    Generates a CSV file like "C:\PS\ADPasswordAudit-2025-04-02.csv" with user audit data.
-#>
+# Script: Export-ADPasswordAudit.ps1
+# Purpose: Exports a detailed password audit report for Active Directory users to a CSV file.
+# Author: FakeIT (AI Assisted)
+# Date: April 02, 2025
+# Notes:
+# - Requires ActiveDirectory module (available on systems with RSAT or AD PowerShell).
+# - Must run with sufficient AD permissions (e.g., Domain Admin or equivalent).
+# - Saves to C:\PS with a dynamic date (e.g., ADPasswordAudit-2025-04-02.csv).
+# - Includes password, status, and activity details for security auditing.
 
-# Ensure the ActiveDirectory module is available
+# Import the ActiveDirectory module to query AD user data
 Import-Module ActiveDirectory -ErrorAction Stop
 
-# Define the output directory and dynamic file name
+# Set up the output file path with a dynamic date
 $outputDir = "C:\PS"
-$currentDate = Get-Date -Format "yyyy-MM-dd"  # Format date as YYYY-MM-DD (e.g., 2025-04-02)
+$currentDate = Get-Date -Format "yyyy-MM-dd"  # Format as YYYY-MM-DD
 $filePath = "$outputDir\ADPasswordAudit-$currentDate.csv"
 
-# Create the output directory if it doesn't exist
+# Create the output directory if it doesn’t exist
 if (-not (Test-Path -Path $outputDir)) {
     New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 }
 
-# Retrieve AD user data with specific properties for the password audit
+# Query AD users and select key properties for the password audit
 Get-ADUser -Filter * `
     -Properties PasswordLastSet, UserPrincipalName, Mail, PasswordExpired, Enabled, `
                 LastLogonDate, Created, PasswordNeverExpires, AccountExpires, BadPwdCount, LockedOut `
     | Select-Object -Property `
-        # User identification fields
-        Name,                                    # Display name of the user
-        UserPrincipalName,                       # Unique UPN (e.g., user@domain.com)
-        Mail,                                    # Email address of the user
-        # Password-related fields
-        @{Name = 'PasswordLastSet'; Expression = {$_.PasswordLastSet}},          # Date password was last changed
-        @{Name = 'PasswordExpired'; Expression = {$_.PasswordExpired}},          # True if password has expired
-        @{Name = 'PasswordNeverExpires'; Expression = {$_.PasswordNeverExpires}},# True if password is set to never expire
-        # Account status fields
-        @{Name = 'AccountEnabled'; Expression = {$_.Enabled}},                   # True if account is active
-        @{Name = 'AccountExpirationDate'; Expression = {$_.AccountExpires}},     # Date account expires (if set)
-        @{Name = 'AccountLockedOut'; Expression = {$_.LockedOut}},               # True if account is locked out
-        # Activity and security fields
-        @{Name = 'LastLogonDate'; Expression = {$_.LastLogonDate}},              # Last replicated logon date
-        @{Name = 'AccountCreated'; Expression = {$_.Created}},                   # Date account was created
-        @{Name = 'BadPasswordAttempts'; Expression = {$_.BadPwdCount}}           # Number of bad password attempts
-    | Export-Csv -Path $filePath -NoTypeInformation  # Export to CSV without extra metadata
+        Name,                                    # User’s display name
+        UserPrincipalName,                       # Unique UPN
+        Mail,                                    # Email address
+        @{Name = 'PasswordLastSet'; Expression = {$_.PasswordLastSet}},          # Last password change
+        @{Name = 'PasswordExpired'; Expression = {$_.PasswordExpired}},          # Password expiration status
+        @{Name = 'PasswordNeverExpires'; Expression = {$_.PasswordNeverExpires}},# Password never expires flag
+        @{Name = 'AccountEnabled'; Expression = {$_.Enabled}},                   # Account active status
+        @{Name = 'AccountExpirationDate'; Expression = {$_.AccountExpires}},     # Account expiration date
+        @{Name = 'AccountLockedOut'; Expression = {$_.LockedOut}},               # Account lockout status
+        @{Name = 'LastLogonDate'; Expression = {$_.LastLogonDate}},              # Last logon date
+        @{Name = 'AccountCreated'; Expression = {$_.Created}},                   # Account creation date
+        @{Name = 'BadPasswordAttempts'; Expression = {$_.BadPwdCount}}           # Failed login attempts
+    | Export-Csv -Path $filePath -NoTypeInformation  # Export to CSV without metadata
 
-# Output confirmation to the console
+# Confirm export completion
 Write-Host "Password audit data exported to: $filePath"
