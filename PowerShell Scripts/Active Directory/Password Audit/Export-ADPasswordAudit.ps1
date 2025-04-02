@@ -24,9 +24,10 @@ if (-not (Test-Path -Path $outputDir)) {
 # Query AD users and select key properties for the password audit
 Get-ADUser -Filter * `
     -Properties PasswordLastSet, UserPrincipalName, Mail, PasswordExpired, Enabled, `
-                LastLogonDate, Created, PasswordNeverExpires, AccountExpires, BadPwdCount, LockedOut `
+                LastLogonDate, Created, PasswordNeverExpires, AccountExpires, BadPwdCount, LockedOut, SamAccountName `
     | Select-Object -Property `
         Name,                                    # User’s display name
+        SamAccountName,                          # User’s SamAccount name
         UserPrincipalName,                       # Unique UPN
         Mail,                                    # Email address
         @{Name = 'PasswordLastSet'; Expression = {$_.PasswordLastSet}},          # Last password change
