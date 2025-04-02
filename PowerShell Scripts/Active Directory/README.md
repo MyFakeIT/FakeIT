@@ -15,7 +15,7 @@ This repository contains a PowerShell script designed to audit password-related 
   ```powershell
   .\Export-ADPasswordAudit.ps1
 
-  ## Prerequisites
+## Prerequisites
 - **PowerShell Module**: `ActiveDirectory`
   - **Install**: Available with Remote Server Administration Tools (RSAT) or AD PowerShell on domain-joined systems.
   - **Enable**: `Import-Module ActiveDirectory`
@@ -35,7 +35,7 @@ This repository contains a PowerShell script designed to audit password-related 
   ```powershell
   Import-Csv "C:\PS\ADPasswordAudit-2025-04-02.csv" | Where-Object { $_.PasswordExpired -eq "True" }
 to find expired passwords.
-Customization: Edit the Select-Object properties in the script to include additional AD fields as needed.
+- Customization: Edit the Select-Object properties in the script to include additional AD fields as needed.
 
 ## Author
 - FakeIT (AI assisted)
