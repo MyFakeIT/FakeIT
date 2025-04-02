@@ -34,7 +34,7 @@ This repository contains a PowerShell script designed to audit password-related 
 - **Verification**: After running, check the CSV for completeness or use:
   ```powershell
   Import-Csv "C:\PS\ADPasswordAudit-2025-04-02.csv" | Where-Object { $_.PasswordExpired -eq "True" }
-  to find expired passwords.
+to find expired passwords.
 Customization: Edit the Select-Object properties in the script to include additional AD fields as needed.
 
 ## Author
