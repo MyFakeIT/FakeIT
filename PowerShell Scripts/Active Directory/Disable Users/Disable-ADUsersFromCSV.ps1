@@ -5,6 +5,7 @@
 # Notes:
 # - Requires ActiveDirectory module.
 # - CSV must have a 'UserPrincipalName' column with valid UPNs (e.g., user@domain.com).
+# - Default CSV file and path: C:\PS\ADUsersToDisable.csv
 # - Must run with sufficient AD permissions (e.g., Domain Admin).
 # - Random passwords include letters, numbers, mixed case, and symbols (!@#$%^&*).
 
@@ -12,7 +13,7 @@
 Import-Module ActiveDirectory -ErrorAction Stop
 
 # Define the CSV file path (modify as needed)
-$csvPath = "C:\PS\UsersToDisable.csv"
+$csvPath = "C:\PS\ADUsersToDisable.csv"
 
 # Function to generate a random 12-character password
 function New-RandomPassword {
