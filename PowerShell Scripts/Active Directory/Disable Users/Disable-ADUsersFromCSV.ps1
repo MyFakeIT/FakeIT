@@ -4,16 +4,23 @@
 # Date: April 02, 2025
 # Notes:
 # - Requires ActiveDirectory module.
-# - CSV must have a 'UserPrincipalName' column with valid UPNs (e.g., user@domain.com).
-# - Default CSV file and path: C:\PS\ADUsersToDisable.csv
+# - CSV must have a 'Username' column; accepts SamAccountName (e.g., user1) or UserPrincipalName (e.g., user1@domain.com).
+# - Default CSV path and file: C:\PS\ADUsersToDisable.csv
 # - Must run with sufficient AD permissions (e.g., Domain Admin).
 # - Random passwords include letters, numbers, mixed case, and symbols (!@#$%^&*).
+# - Optional: Uncomment group addition or password expiration sections as needed.
 
 # Import the ActiveDirectory module
 Import-Module ActiveDirectory -ErrorAction Stop
 
-# Define the CSV file path (modify as needed)
+# Define the CSV file path
 $csvPath = "C:\PS\ADUsersToDisable.csv"
+
+# Optional: Define an AD group to add users to (uncomment to use)
+$groupName = "PW-Cleanup"  #  Group to add users to
+
+# Get the current domain name for UPN construction
+$domain = (Get-ADDomain).DNSRoot  # e.g., "example.com"
 
 # Function to generate a random 12-character password
 function New-RandomPassword {
@@ -23,15 +30,43 @@ function New-RandomPassword {
     return $password
 }
 
+# Validate the group if specified
+if ($groupName) {
+    try {
+        $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+        $groupDN = $group.DistinguishedName
+        Write-Host "Group found: $groupDN"
+    } catch {
+        Write-Error "Group '$groupName' not found or inaccessible. Aborting group addition."
+        $groupDN = $null
+    }
+}
+
 # Read the CSV and process each user
 $users = Import-Csv -Path $csvPath
 
 foreach ($user in $users) {
-    $upn = $user.UserPrincipalName
+    $inputName = $user.Username
+    
+    # Determine if the input includes a domain; if not, append the current domain
+    if ($inputName -notmatch "@") {
+        $upn = "$inputName@$domain"  # e.g., user1 -> user1@example.com
+        $lookupName = $inputName     # Use as SamAccountName (e.g., user1)
+    } else {
+        $upn = $inputName            # e.g., user1@example.com
+        $lookupName = ($inputName -split "@")[0]  # Extract SamAccountName (e.g., user1)
+    }
+    
+    # Escape single quotes in both UPN and SamAccountName for the filter
+    $upnEscaped = $upn -replace "'", "''"  # Replace ' with '' (e.g., user's.name -> user''s.name)
+    $lookupNameEscaped = $lookupName -replace "'", "''"  # Replace ' with '' (e.g., user's.name -> user''s.name)
     
     try {
-        # Get the AD user object
-        $adUser = Get-ADUser -Filter "UserPrincipalName -eq '$upn'" -ErrorAction Stop
+        # Try to get the AD user by UPN first, then fall back to SamAccountName
+        $adUser = Get-ADUser -Filter "UserPrincipalName -eq '$upnEscaped'" -ErrorAction SilentlyContinue
+        if (-not $adUser) {
+            $adUser = Get-ADUser -Filter "SamAccountName -eq '$lookupNameEscaped'" -ErrorAction SilentlyContinue
+        }
         
         if ($adUser) {
             # Generate a random 12-character password
@@ -47,16 +82,40 @@ foreach ($user in $users) {
             Write-Host "Set random password for: $upn"
             
             # Uncheck "Password never expires" and check "User must change password at next logon"
-            Set-ADUser -Identity $adUser `
-                       -PasswordNeverExpires $false `
-                       -ChangePasswordAtLogon $true `
-                       -ErrorAction Stop
+            try {
+                Set-ADUser -Identity $adUser `
+                           -PasswordNeverExpires $false `
+                           -ChangePasswordAtLogon $true `
+                           -ErrorAction Stop
+                
+                # Verify the "User must change password at next logon" setting
+                $updatedUser = Get-ADUser -Identity $adUser -Properties pwdLastSet -ErrorAction Stop
+                if ($updatedUser.pwdLastSet -eq 0) {
+                    Write-Host "Confirmed: 'User must change password at next logon' is set for $upn"
+                } else {
+                    Write-Warning "'User must change password at next logon' NOT set for $upn (pwdLastSet: $($updatedUser.pwdLastSet))"
+                }
+            } catch {
+                Write-Error "Failed to set password policies for $upn : $_"
+                continue
+            }
+            
             Write-Host "Configured password policies for: $upn (Password: $newPassword)"
+            
+            # Optional: Force password to expire immediately (uncomment to enable)
+            # Set-ADUser -Identity $adUser -Replace @{pwdLastSet = 0} -ErrorAction Stop
+            # Write-Host "Forced password expiration for: $upn"
+            
+            # Optional: Add user to a specified group (uncomment to enable)
+            if ($groupDN) {
+                Add-ADGroupMember -Identity $groupDN -Members $adUser -ErrorAction Stop
+                Write-Host "Added $upn to group: $groupName"
+            }
         } else {
-            Write-Warning "User not found: $upn"
+            Write-Warning "User not found: $inputName"
         }
     } catch {
-        Write-Error "Failed to process $upn : $_"
+        Write-Error "Failed to process $inputName : $_"
     }
 }
 
