@@ -37,15 +37,42 @@ $csvPath = "C:\PS\O365UsersToDisable.csv"
 function New-RandomPassword {
     $minLength = 12
     $maxLength = 15
-    $length = Get-Random -Minimum $minLength -Maximum ($maxLength + 1)  # Maximum is exclusive
-    $chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*"
-    $password = -join ((0..($length - 1)) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
-    return $password
+    $length = Get-Random -Minimum $minLength -Maximum ($maxLength + 1)
+
+    # Define character sets
+    $upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    $lower = "abcdefghijklmnopqrstuvwxyz"
+    $numbers = "0123456789"
+    $special = "!@#$%^&*"
+
+    # Ensure at least one of each category
+    $password = @(
+        $upper[(Get-Random -Maximum $upper.Length)]
+        $lower[(Get-Random -Maximum $lower.Length)]
+        $numbers[(Get-Random -Maximum $numbers.Length)]
+        $special[(Get-Random -Maximum $special.Length)]
+    )
+
+    # Fill the remaining length with random characters
+    $allChars = $upper + $lower + $numbers + $special
+    $remainingLength = $length - 4
+    if ($remainingLength -gt 0) {
+        $password += 0..($remainingLength - 1) | ForEach-Object { $allChars[(Get-Random -Maximum $allChars.Length)] }
+    }
+
+    # Shuffle the password to avoid predictable patterns
+    $password = $password | Get-Random -Count $password.Length
+    return -join $password
 }
 
 # Connect to Microsoft Graph (requires User.ReadWrite.All scope for user management)
-Connect-MgGraph -Scopes "User.ReadWrite.All" -ErrorAction Stop
-Write-Host "Connected to Microsoft Graph"
+try {
+    Connect-MgGraph -Scopes "User.ReadWrite.All" -ErrorAction Stop -NoWelcome
+    Write-Host "Connected to Microsoft Graph" -ForegroundColor Green
+} catch {
+    Write-Error "Failed to connect to Microsoft Graph: $_"
+    exit
+}
 
 # Read the CSV and process each user
 $users = Import-Csv -Path $csvPath
@@ -66,20 +93,52 @@ foreach ($user in $users) {
         if ($o365User) {
             # Disable the account in O365
             Update-MgUser -UserId $o365User.Id -AccountEnabled $false -ErrorAction Stop
-            Write-Host "Disabled O365 account: $upn"
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Disabled O365 account" -ForegroundColor White
+            Write-Host
 
-            # Generate and set a random password
+            # Generate and set a random password with retry logic
             $newPassword = New-RandomPassword
             $passwordProfile = @{
                 "password" = $newPassword
                 "forceChangePasswordNextSignIn" = $true  # Forces password change at next sign-in
             }
-            Update-MgUser -UserId $o365User.Id -PasswordProfile $passwordProfile -ErrorAction Stop
-            Write-Host "Set random password for: $upn (Password: $newPassword)"
+            $maxRetries = 3
+            $retryCount = 0
+            $passwordSet = $false
+            do {
+                try {
+                    Update-MgUser -UserId $o365User.Id -PasswordProfile $passwordProfile -ErrorAction Stop
+                    $passwordSet = $true
+                } catch {
+                    $retryCount++
+                    if ($retryCount -ge $maxRetries) {
+                        throw $_  # Re-throw the error after max retries
+                    }
+                    Write-Warning ("Password attempt {0} failed for {1}: {2}. Retrying..." -f $retryCount, $upn, $_.Exception.Message)
+                    $newPassword = New-RandomPassword
+                    $passwordProfile["password"] = $newPassword
+                }
+            } until ($passwordSet -or $retryCount -ge $maxRetries)
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Set random password for O365 account (Password: " -ForegroundColor White
+            Write-Host -NoNewline "$newPassword" -ForegroundColor Yellow
+            Write-Host ")" -ForegroundColor White
+
+            # Verify the password change
+            $updatedO365User = Get-MgUser -UserId $o365User.Id -Property LastPasswordChangeDateTime -ErrorAction Stop
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Last O365 Password Change Date: " -ForegroundColor White
+            Write-Host "$($updatedO365User.LastPasswordChangeDateTime)" -ForegroundColor Yellow
 
             # Ensure cloud expiration policy by clearing PasswordPolicies
             Update-MgUser -UserId $o365User.Id -PasswordPolicies "" -ErrorAction Stop
-            Write-Host "Ensured cloud expiration policy for: $upn"
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Ensured cloud expiration policy" -ForegroundColor White
+            Write-Host
+
+            # Add red horizontal line after user processing
+            Write-Host "----------" -ForegroundColor Red
         } else {
             Write-Warning "User not found in O365: $upn"
         }
@@ -90,4 +149,4 @@ foreach ($user in $users) {
 
 # Disconnect from Microsoft Graph
 Disconnect-MgGraph -ErrorAction SilentlyContinue
-Write-Host "Processing complete. Check output for details."
+Write-Host "Processing complete. Check output for details." -ForegroundColor Green
