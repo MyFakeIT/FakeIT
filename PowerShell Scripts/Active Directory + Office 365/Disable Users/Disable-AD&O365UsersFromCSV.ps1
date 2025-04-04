@@ -64,22 +64,46 @@ $domain = (Get-ADDomain).DNSRoot  # e.g., "example.com"
 function New-RandomPassword {
     $minLength = 12
     $maxLength = 15
-    $length = Get-Random -Minimum $minLength -Maximum ($maxLength + 1)  # Maximum is exclusive
-    $chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*"
-    $password = -join ((0..($length - 1)) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
-    return $password
+    $length = Get-Random -Minimum $minLength -Maximum ($maxLength + 1)
+
+    # Define character sets
+    $upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    $lower = "abcdefghijklmnopqrstuvwxyz"
+    $numbers = "0123456789"
+    $special = "!@#$%^&*"
+
+    # Ensure at least one of each category
+    $password = @(
+        $upper[(Get-Random -Maximum $upper.Length)]
+        $lower[(Get-Random -Maximum $lower.Length)]
+        $numbers[(Get-Random -Maximum $numbers.Length)]
+        $special[(Get-Random -Maximum $special.Length)]
+    )
+
+    # Fill the remaining length with random characters
+    $allChars = $upper + $lower + $numbers + $special
+    $remainingLength = $length - 4
+    if ($remainingLength -gt 0) {
+        $password += 0..($remainingLength - 1) | ForEach-Object { $allChars[(Get-Random -Maximum $allChars.Length)] }
+    }
+
+    # Shuffle the password to avoid predictable patterns
+    $password = $password | Get-Random -Count $password.Length
+    return -join $password
 }
 
-# Connect to Microsoft Graph (requires User.ReadWrite.All scope for user management)
-Connect-MgGraph -Scopes "User.ReadWrite.All" -ErrorAction Stop
-Write-Host "Connected to Microsoft Graph"
+# Connect to Microsoft Graph with broader scopes
+Disconnect-MgGraph -ErrorAction SilentlyContinue
+Connect-MgGraph -Scopes "User.ReadWrite.All","Directory.AccessAsUser.All","Directory.ReadWrite.All" -ErrorAction Stop -NoWelcome
+Write-Host "Connected to Microsoft Graph" -ForegroundColor Green
 
 # Validate the on-premises AD group
 $groupDN = $null
 try {
     $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
     $groupDN = $group.DistinguishedName
-    Write-Host "On-premises AD group found: $groupDN"
+    Write-Host -NoNewline "On-premises AD group found: " -ForegroundColor White
+    Write-Host "$groupDN" -ForegroundColor Yellow
 } catch {
     Write-Error "On-premises AD group '$groupName' not found or inaccessible. Group addition will be skipped: $_"
     $groupDN = $null
@@ -119,7 +143,11 @@ foreach ($user in $users) {
 
         # Process AD user if found
         if ($adUser) {
-            $displayName = $adUser.UserPrincipalName ? $adUser.UserPrincipalName : $adUser.SamAccountName
+            if ($adUser.UserPrincipalName) {
+                $displayName = $adUser.UserPrincipalName
+            } else {
+                $displayName = $adUser.SamAccountName
+            }
 
             # Generate a random password for AD
             $newPassword = New-RandomPassword
@@ -127,26 +155,60 @@ foreach ($user in $users) {
 
             # Disable the AD account
             Disable-ADAccount -Identity $adUser -ErrorAction Stop
-            Write-Host "Disabled on-premises AD account: $displayName"
+            Write-Host -NoNewline "$displayName" -ForegroundColor Green
+            Write-Host -NoNewline ": Disabled on-premises AD account" -ForegroundColor White
+            Write-Host
 
-            # Set the new random password in AD
-            Set-ADAccountPassword -Identity $adUser -NewPassword $securePassword -Reset -ErrorAction Stop
-            Write-Host "Set random password for AD account: $displayName"
+            # Set the new random password in AD with retry logic
+            $maxRetries = 3
+            $retryCount = 0
+            $passwordSet = $false
+            do {
+                try {
+                    Set-ADAccountPassword -Identity $adUser -NewPassword $securePassword -Reset -ErrorAction Stop
+                    $passwordSet = $true
+                } catch {
+                    $retryCount++
+                    if ($retryCount -ge $maxRetries) {
+                        throw $_  # Re-throw the error after max retries
+                    }
+                    Write-Warning ("Password attempt {0} failed for {1}: {2}. Retrying..." -f $retryCount, $displayName, $_.Exception.Message)
+                    $newPassword = New-RandomPassword
+                    $securePassword = ConvertTo-SecureString $newPassword -AsPlainText -Force
+                }
+            } until ($passwordSet -or $retryCount -ge $maxRetries)
+            Write-Host -NoNewline "$displayName" -ForegroundColor Green
+            Write-Host -NoNewline ": Set random password for AD account" -ForegroundColor White
+            Write-Host
 
-            # Configure AD password policies
+            # Verify the AD password change immediately
+            $updatedADUser = Get-ADUser -Identity $adUser -Properties pwdLastSet -ErrorAction Stop
+            $pwdLastSetDate = [DateTime]::FromFileTime($updatedADUser.pwdLastSet)
+            Write-Host -NoNewline "$displayName" -ForegroundColor Green
+            Write-Host -NoNewline ": Last AD Password Change Date: " -ForegroundColor White
+            Write-Host "$pwdLastSetDate" -ForegroundColor Yellow
+
+            # Configure AD password policies (this sets pwdLastSet to 0)
             Set-ADUser -Identity $adUser -PasswordNeverExpires $false -ChangePasswordAtLogon $true -ErrorAction Stop
             $updatedUser = Get-ADUser -Identity $adUser -Properties pwdLastSet -ErrorAction Stop
             if ($updatedUser.pwdLastSet -eq 0) {
-                Write-Host "Confirmed: 'User must change password at next logon' is set for $displayName"
+                Write-Host -NoNewline "$displayName" -ForegroundColor Green
+                Write-Host -NoNewline ": Confirmed: 'User must change password at next logon' is set" -ForegroundColor White
+                Write-Host
             } else {
                 Write-Warning "'User must change password at next logon' NOT set for $displayName (pwdLastSet: $($updatedUser.pwdLastSet))"
             }
-            Write-Host "Configured AD password policies for: $displayName (Password: $newPassword)"
+            Write-Host -NoNewline "$displayName" -ForegroundColor Green
+            Write-Host -NoNewline ": Configured AD password policies (Password: " -ForegroundColor White
+            Write-Host -NoNewline "$newPassword" -ForegroundColor Yellow
+            Write-Host ")" -ForegroundColor White
 
             # Add to AD group if specified
             if ($groupDN) {
                 Add-ADGroupMember -Identity $groupDN -Members $adUser -ErrorAction Stop
-                Write-Host "Added $displayName to on-premises AD group: $groupName"
+                Write-Host -NoNewline "$displayName" -ForegroundColor Green
+                Write-Host -NoNewline ": Added to on-premises AD group: " -ForegroundColor White
+                Write-Host "$groupName" -ForegroundColor Yellow
             }
         } else {
             Write-Warning "User not found in AD: $inputName"
@@ -155,22 +217,43 @@ foreach ($user in $users) {
         # Process O365 user with notification instead of error if not found
         $o365User = Get-MgUser -UserId $upn -ErrorAction SilentlyContinue
         if ($o365User) {
-            # Disable the O365 account
-            Update-MgUser -UserId $o365User.Id -AccountEnabled $false -ErrorAction Stop
-            Write-Host "Disabled O365 account: $upn"
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Attempting to disable O365 account" -ForegroundColor White
+            Write-Host
+            Update-MgUser -UserId $o365User.Id -AccountEnabled:$false -ErrorAction Stop
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Disabled O365 account" -ForegroundColor White
+            Write-Host
 
-            # Set the same random password in O365 (if AD user exists, reuse; otherwise, generate new)
-            $o365Password = $adUser ? $newPassword : (New-RandomPassword)
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Attempting to set O365 password" -ForegroundColor White
+            Write-Host
+            if ($adUser) {
+                $o365Password = $newPassword
+            } else {
+                $o365Password = New-RandomPassword
+            }
             $passwordProfile = @{
                 "password" = $o365Password
                 "forceChangePasswordNextSignIn" = $true
             }
             Update-MgUser -UserId $o365User.Id -PasswordProfile $passwordProfile -ErrorAction Stop
-            Write-Host "Set random password for O365 account: $upn (Password: $o365Password)"
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Set random password for O365 account (Password: " -ForegroundColor White
+            Write-Host -NoNewline "$o365Password" -ForegroundColor Yellow
+            Write-Host ")" -ForegroundColor White
 
-            # Ensure cloud expiration policy
-            Update-MgUser -UserId $o365User.Id -PasswordPolicies "" -ErrorAction Stop
-            Write-Host "Ensured cloud expiration policy for: $upn"
+            # Verify the O365 password change immediately
+            $updatedO365User = Get-MgUser -UserId $o365User.Id -Property LastPasswordChangeDateTime -ErrorAction Stop
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Last O365 Password Change Date: " -ForegroundColor White
+            Write-Host "$($updatedO365User.LastPasswordChangeDateTime)" -ForegroundColor Yellow
+
+            # Tenant default password policy will apply, followed by red line
+            Write-Host -NoNewline "$upn" -ForegroundColor Green
+            Write-Host -NoNewline ": Tenant default password policy will apply" -ForegroundColor White
+            Write-Host
+            Write-Host "----------" -ForegroundColor Red
         } elseif ($adUser) {
             Write-Warning "User $upn found in AD but not in O365. O365 actions skipped."
         } else {
@@ -183,4 +266,4 @@ foreach ($user in $users) {
 
 # Disconnect from Microsoft Graph
 Disconnect-MgGraph -ErrorAction SilentlyContinue
-Write-Host "Processing complete. Check output for details."
+Write-Host "Processing complete. Check output for details." -ForegroundColor Green
