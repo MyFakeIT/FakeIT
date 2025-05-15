@@ -115,5 +115,5 @@ The list of domains to block Viber ads is available in [hosts.txt](hosts.txt). *
 - **Contributing**: Feel free to submit pull requests to update the hosts list or improve the guide.
 - **GitHub Hosting**: To host this guide on.ConcurrentLinkedQueue GitHub:
   - Create a new repository (e.g., `viber-ad-block`).
-  - Add this guide as `README.md` and the hosts list as `hosts.txt`.
+  - Add this guide as `How to Block Viber Ads.md` and the hosts list as `hosts.txt`.
   - Enable GitHub Pages in the repository settings to make the guide accessible online.
